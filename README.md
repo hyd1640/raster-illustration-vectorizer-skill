@@ -1,56 +1,61 @@
 # Raster Illustration Vectorizer Skill
 
-A Codex skill for semi-automatic conversion of raster scientific illustrations, hand-drawn explanatory diagrams, map-like figures, and disaster-chain schematics into structured SVG.
+V2-only Codex skill for converting raster scientific-illustration elements into a reusable SVG symbol library.
 
-This V1 is intentionally conservative. It prioritizes reproducibility, inspectable intermediate files, and manual checkpoints over fully automatic object recognition.
+The workflow is intentionally not an automatic full-scene reconstruction system. It stops after producing reviewed SVG symbol candidates. Final composition is expected to be done manually in Illustrator, Inkscape, Figma, PowerPoint, ArcGIS Pro, or another vector/cartographic layout tool.
 
-## What V1 does
+## Core V2 route
 
-1. Analyze the input image: dimensions, background, approximate color complexity, edge density, and likely text-like regions.
-2. Optionally enhance low-resolution inputs using deterministic scaling and sharpening. AI/super-resolution outputs should be treated as enhancement only, not as ground truth.
-3. Segment the image into coarse visual elements using connected components, edge masks, and color/area heuristics.
-4. Save element crops into an `assets/` directory and record layout metadata in `analysis/layout.json`.
-5. Trace element crops with `vtracer` by default, using Illustrator-like low/medium/high presets.
-6. Optimize generated SVGs with `svgo` when available.
-7. Reassemble traced elements into a final SVG using the original coordinate system and z-order metadata.
-8. Generate preview and QA artifacts when a renderer such as Inkscape is available.
-
-## Default V1 parameters
-
-```yaml
-segmentation_level: medium
-smoothing_level: medium
-noise_filter_level: medium
-trace_mode: spline
+```text
+raster scientific illustration
+→ visual/semantic element analysis
+→ generated or user-provided symbol sheet
+→ extracted per-symbol PNG assets
+→ SVG symbol library
+→ manual figure composition by the user
 ```
 
-Parameter intent:
+The previous V1 route that segmented an entire source image, traced all parts, and reassembled a final scene has been removed from the main workflow.
 
-| Parameter | Low | Medium | High |
-|---|---|---|---|
-| `segmentation_level` | coarse structures only | main icons, lines, and shapes | smaller individual objects |
-| `smoothing_level` | preserve hand-drawn irregularity | moderate smoothing | cleaner, more regular paths |
-| `noise_filter_level` | retain fine details | remove small speckles | aggressive cleanup; may lose detail |
+## Two vectorization modes
+
+### 1. `faithful-trace` default
+
+Uses `vtracer` with conservative symbol-friendly parameters. This is the recommended mode for clean generated symbol PNGs.
+
+Purpose:
+
+- preserve visual appearance;
+- preserve hand-drawn outlines and small details;
+- avoid excessive cleanup on already-clean icons;
+- create SVG symbol candidates for manual review.
+
+Default trace profile is `low`, because for clean icon assets, aggressive speckle filtering and smoothing often damage outlines.
+
+### 2. `symbol-redraw` experimental
+
+Uses a deterministic local fallback:
+
+```text
+white/background removal
+→ content crop
+→ foreground mask
+→ palette reduction
+→ contour extraction
+→ simplified SVG paths
+```
+
+This mode is not a generative model and is not expected to match high-quality manual redraw. It is useful for quick prototypes or environments where `vtracer` is unavailable.
 
 ## Repository layout
 
 ```text
 .agents/skills/raster-illustration-vectorizer/
 ├─ SKILL.md
-├─ scripts/
-│  ├─ analyze_image.py
-│  ├─ preprocess_image.py
-│  ├─ segment_elements.py
-│  ├─ trace_elements.py
-│  ├─ assemble_svg.py
-│  ├─ qa_compare.py
-│  └─ run_pipeline.py
-├─ references/
-│  ├─ parameter_presets.md
-│  ├─ workflow.md
-│  └─ qa_rules.md
-└─ examples/
-   └─ README.md
+└─ scripts/
+   ├─ extract_symbol_assets.py
+   ├─ vectorize_symbols.py
+   └─ run_pipeline.py
 ```
 
 ## Dependencies
@@ -61,63 +66,142 @@ Python dependencies:
 python -m pip install -r requirements.txt
 ```
 
-External command-line tools:
+External tools for the recommended `faithful-trace` mode:
 
 ```bash
-# macOS examples
-brew install imagemagick inkscape
 cargo install vtracer
-npm install -g svgo
+npm install -g svgo   # optional optimizer
 ```
 
-On Windows or Linux, install equivalent packages for ImageMagick, Inkscape, `vtracer`, and `svgo`.
+`symbol-redraw` does not require `vtracer`, but its output quality is lower and must be reviewed.
 
-## Quick start
+## Quick start: symbol sheet to SVG library
 
 ```bash
 python .agents/skills/raster-illustration-vectorizer/scripts/run_pipeline.py \
-  input.png \
-  --workdir work \
-  --profile medium
+  --symbol-sheet symbol_sheet.png \
+  --workdir work_v2 \
+  --mode faithful-trace \
+  --trace-profile low
 ```
 
-Equivalent explicit parameters:
-
-```bash
-python .agents/skills/raster-illustration-vectorizer/scripts/run_pipeline.py \
-  input.png \
-  --workdir work \
-  --segmentation-level medium \
-  --smoothing-level medium \
-  --noise-filter-level medium \
-  --trace-mode spline
-```
-
-Expected outputs:
+Expected output:
 
 ```text
-work/
-├─ analysis/
-│  ├─ image_report.json
-│  ├─ layout.json
-│  └─ qa_report.json
+work_v2/
 ├─ assets/
-│  ├─ icons/
-│  ├─ lines/
-│  ├─ shapes/
-│  └─ compounds/
-├─ vectors/
-├─ preview/
-│  ├─ assembled_preview.png
-│  └─ diff_overlay.png
-└─ output/
-   └─ final.svg
+│  └─ symbol_candidates/
+│     ├─ section_01/
+│     ├─ section_02/
+│     └─ symbol_assets_manifest.json
+├─ output/
+│  └─ symbol_library/
+│     ├─ symbols_png_clean/
+│     ├─ symbols_svg/
+│     └─ vector_symbol_manifest.json
+└─ pipeline_summary.json
+```
+
+## Quick start: existing per-symbol PNG directory
+
+When you already have manually curated symbol PNG folders, skip symbol-sheet extraction:
+
+```bash
+python .agents/skills/raster-illustration-vectorizer/scripts/run_pipeline.py \
+  --assets-dir assets/symbol_png \
+  --workdir work_v2 \
+  --mode faithful-trace \
+  --trace-profile low
+```
+
+## Explicit extraction only
+
+```bash
+python .agents/skills/raster-illustration-vectorizer/scripts/extract_symbol_assets.py \
+  symbol_sheet.png \
+  --out-dir work_v2/assets/symbol_candidates
+```
+
+The extractor does not OCR labels. Automatic output should be reviewed and renamed before publication use.
+
+For stable production, provide a layout schema with explicit bboxes:
+
+```bash
+python .agents/skills/raster-illustration-vectorizer/scripts/extract_symbol_assets.py \
+  symbol_sheet.png \
+  --layout-schema symbol_sheet_schema.json \
+  --out-dir work_v2/assets/symbol_candidates
+```
+
+Schema example:
+
+```json
+{
+  "symbols": [
+    {
+      "symbol_id": "tree_broadleaf_001",
+      "semantic_class": "tree_or_vegetation",
+      "bbox_xyxy": [38, 575, 108, 695],
+      "role": "vegetation_context",
+      "reuse_allowed": true
+    }
+  ]
+}
+```
+
+## Explicit vectorization only
+
+```bash
+python .agents/skills/raster-illustration-vectorizer/scripts/vectorize_symbols.py \
+  work_v2/assets/symbol_candidates \
+  --out-dir work_v2/output/symbol_library \
+  --mode faithful-trace \
+  --trace-profile low
+```
+
+Fallback option when `vtracer` is unavailable:
+
+```bash
+python .agents/skills/raster-illustration-vectorizer/scripts/vectorize_symbols.py \
+  work_v2/assets/symbol_candidates \
+  --out-dir work_v2/output/symbol_library \
+  --mode faithful-trace \
+  --fallback-symbol-redraw
+```
+
+## Manifest fields
+
+`vector_symbol_manifest.json` records each output symbol:
+
+```json
+{
+  "symbol_id": "section_02__tree_001",
+  "semantic_folder": "section_02",
+  "source_png": "...",
+  "clean_png": "...",
+  "svg": "...",
+  "mode": "faithful-trace",
+  "reuse_allowed": true,
+  "review_required": true
+}
+```
+
+Downstream projects may extend this with:
+
+```json
+{
+  "semantic_class": "tree_or_vegetation",
+  "role": "vegetation_context",
+  "state": "normal",
+  "style_token": "hand_drawn_clean_dark_blue_outline",
+  "preferred_scale_range": [0.5, 1.5]
+}
 ```
 
 ## Important limitations
 
-V1 does not perform reliable semantic object naming. It creates conservative element IDs such as `icon_001`, `shape_002`, or `line_003`. Rename elements manually in `analysis/layout.json` if semantic names such as `house_01`, `tree_01`, or `river_01` are required.
-
-V1 detects likely text-like regions only to exclude or flag them. It does not OCR text and should not infer text content.
-
-Automatic vectorization can over-fragment hand-drawn textures, rain lines, stones, and shading. Always inspect `preview/diff_overlay.png` and `analysis/qa_report.json` before using `output/final.svg` as a final publication asset.
+- The skill does not perform final automatic scene assembly.
+- The skill does not OCR text or infer label contents from Chinese/English captions.
+- Automatic symbol-sheet extraction is heuristic and should be reviewed.
+- `faithful-trace` relies on `vtracer`; without it, use `symbol-redraw` only as a prototype fallback.
+- `symbol-redraw` may convert strokes into filled contours; it is not equivalent to manual SVG redraw.
