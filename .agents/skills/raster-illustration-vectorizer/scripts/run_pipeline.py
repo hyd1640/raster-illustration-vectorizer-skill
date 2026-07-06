@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end pipeline for raster illustration vectorization."""
+"""End-to-end pipeline for raster illustration vectorization (V1 + V2)."""
 
 from __future__ import annotations
 
@@ -18,10 +18,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=Path)
     parser.add_argument("--workdir", type=Path, default=Path("work"))
+    parser.add_argument("--mode", choices=["faithful-trace", "semantic-redraw"], default="faithful-trace")
     parser.add_argument("--profile", choices=["low", "medium", "high"], default="medium")
     parser.add_argument("--segmentation-level", choices=["low", "medium", "high"])
     parser.add_argument("--smoothing-level", choices=["low", "medium", "high"])
     parser.add_argument("--noise-filter-level", choices=["low", "medium", "high"])
+
+    # V2 semantic parameters（中文注释：仅在 semantic-redraw 模式下生效）
+    parser.add_argument("--semantic-abstraction-level", choices=["low", "medium", "high"], default="medium")
+    parser.add_argument("--symbol-reuse-level", choices=["low", "medium", "high"], default="medium")
+    parser.add_argument("--state-preservation-strictness", choices=["low", "medium", "high"], default="high")
+
     args = parser.parse_args()
 
     workdir = args.workdir
@@ -34,7 +41,6 @@ def main() -> None:
     assets = workdir / "assets"
     vectors = workdir / "vectors"
     output = workdir / "output"
-    preview = workdir / "preview"
 
     report = analysis / "image_report.json"
     layout = analysis / "layout.json"
@@ -60,6 +66,32 @@ def main() -> None:
         "--segmentation-level",
         seg,
     ])
+
+    # V2模式：语义重绘流程
+    if args.mode == "semantic-redraw":
+        scene_graph = analysis / "scene_graph.json"
+        semantic_groups = analysis / "semantic_groups.json"
+
+        run([
+            "python",
+            ".agents/skills/raster-illustration-vectorizer/scripts/build_scene_graph.py",
+            "--layout",
+            str(layout),
+            "--assets-dir",
+            str(assets),
+            "--scene-graph",
+            str(scene_graph),
+            "--semantic-groups",
+            str(semantic_groups),
+            "--semantic-abstraction-level",
+            args.semantic_abstraction_level,
+            "--symbol-reuse-level",
+            args.symbol_reuse_level,
+            "--state-preservation-strictness",
+            args.state_preservation_strictness,
+        ])
+
+        print("[V2] scene graph built. symbol generation step pending (Image Generation Skill / manual review)")
 
     run([
         "python",
