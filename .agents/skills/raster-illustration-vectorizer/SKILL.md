@@ -1,188 +1,188 @@
 ---
 name: raster-illustration-vectorizer
-description: Semi-automatically convert raster scientific illustrations, hand-drawn diagrams, disaster-chain schematics, and map-like figures into structured, editable SVG using preprocessing, element segmentation, vtracer tracing, SVG optimization, layout reassembly, and QA checks.
+description: V2-only workflow for converting raster scientific-illustration elements into a reusable SVG symbol library. Use a generated or user-provided symbol sheet, extract per-symbol PNG assets, vectorize each asset in faithful-trace or symbol-redraw mode, and stop before final manual figure composition.
 ---
 
-# Raster Illustration Vectorizer
+# Raster Illustration Vectorizer V2
 
-Use this skill when the user wants to convert a raster image such as PNG, JPG, or TIFF into a clean SVG while preserving the original visual structure, layout, and hand-drawn style as much as practical.
+Use this skill when the user wants to build a reusable SVG symbol library from raster scientific illustrations, disaster-chain schematics, hand-drawn diagrams, or map-like figure elements.
 
-This skill is designed for V1 semi-automatic operation. It should produce inspectable intermediate artifacts and ask for human review when segmentation, tracing, or layout fidelity is uncertain.
+This skill is now **V2-only**. It does **not** attempt to automatically reassemble a final scene. The final composition should be done manually by the user in a vector editor, GIS/cartographic tool, slide editor, or publication layout workflow.
 
 ## Core objective
 
-Convert a raster figure into a structured SVG scene. Prioritize:
+Convert raster element assets into a reviewed SVG symbol library:
 
-1. Element completeness.
-2. Spatial fidelity.
-3. Layer and occlusion consistency.
-4. Visual style consistency.
-5. SVG editability.
+```text
+source illustration analysis
+→ symbol sheet generation or user-provided symbol sheet
+→ per-symbol PNG extraction
+→ SVG symbol vectorization
+→ manifest output
+→ user/manual scene composition
+```
 
-Do not optimize only for visual similarity if the result becomes an uneditable mass of fragmented paths.
+The output should be inspectable and editable. Do not claim a symbol is publication-ready unless the user has reviewed it.
 
 ## Non-goals
 
+- Do not automatically assemble the final scene.
 - Do not OCR text.
-- Do not infer or rewrite text content.
-- Do not claim AI upscaling is lossless.
-- Do not treat hallucinated super-resolution details as ground truth.
-- Do not collapse all objects into one unstructured SVG if element-level reassembly is feasible.
+- Do not infer or rewrite text labels.
+- Do not treat automatic symbol extraction as semantic truth.
+- Do not claim deterministic `symbol-redraw` is equivalent to manual vector redraw.
+- Do not embed raster images into SVG and call them vector output.
 
-## Default V1 parameters
+## V2 phases
 
-Use these unless the user specifies otherwise:
+### 1. Symbol sheet preparation
 
-```yaml
-segmentation_level: medium
-smoothing_level: medium
-noise_filter_level: medium
-trace_mode: spline
+The user may provide a generated or manually prepared symbol sheet containing clean standalone icons and texture snippets. The sheet should separate visual elements such as:
+
+- trigger factors: clouds, rain strokes;
+- environmental context: mountains/slopes, rivers, roads, bridges, vegetation;
+- disaster processes: landslide body, debris-flow texture, cracks, rocks, dust;
+- exposed assets: houses, guardrails, infrastructure;
+- auxiliary marks: stones, soil clumps, contour lines, surface texture, flow arrows.
+
+### 2. Symbol asset extraction
+
+Use `extract_symbol_assets.py` to split a symbol sheet into per-symbol PNG assets:
+
+```bash
+python .agents/skills/raster-illustration-vectorizer/scripts/extract_symbol_assets.py \
+  symbol_sheet.png \
+  --out-dir work_v2/assets/symbol_candidates
 ```
 
-The low/medium/high settings follow the intent of Adobe Illustrator Image Trace controls, but are simplified for reproducible scripting.
+The automatic extractor uses background estimation, foreground masks, divider detection, text/header suppression, and connected components. It does not OCR labels and should be treated as a candidate extractor.
 
-| Parameter | Low | Medium | High |
-|---|---|---|---|
-| `segmentation_level` | coarse structures only | main icons, lines, and shapes | smaller individual objects |
-| `smoothing_level` | preserve hand-drawn irregularity | moderate smoothing | cleaner, more regular paths |
-| `noise_filter_level` | retain fine details | remove small speckles | aggressive cleanup; may lose detail |
+For stable production, prefer an explicit layout schema:
 
-## Standard workflow
+```bash
+python .agents/skills/raster-illustration-vectorizer/scripts/extract_symbol_assets.py \
+  symbol_sheet.png \
+  --layout-schema symbol_sheet_schema.json \
+  --out-dir work_v2/assets/symbol_candidates
+```
 
-Run the pipeline from the repository root:
+### 3. SVG symbol vectorization
+
+Use `vectorize_symbols.py` to convert each PNG symbol into an SVG symbol candidate:
+
+```bash
+python .agents/skills/raster-illustration-vectorizer/scripts/vectorize_symbols.py \
+  work_v2/assets/symbol_candidates \
+  --out-dir work_v2/output/symbol_library \
+  --mode faithful-trace \
+  --trace-profile low
+```
+
+### 4. Pipeline entry point
+
+Use `run_pipeline.py` when the user wants extraction and vectorization in one call:
 
 ```bash
 python .agents/skills/raster-illustration-vectorizer/scripts/run_pipeline.py \
-  <input-image> \
-  --workdir work \
-  --profile medium
+  --symbol-sheet symbol_sheet.png \
+  --workdir work_v2 \
+  --mode faithful-trace \
+  --trace-profile low
 ```
 
-Or specify controls explicitly:
+Or skip extraction if per-symbol PNG files already exist:
 
 ```bash
 python .agents/skills/raster-illustration-vectorizer/scripts/run_pipeline.py \
-  <input-image> \
-  --workdir work \
-  --segmentation-level medium \
-  --smoothing-level medium \
-  --noise-filter-level medium \
-  --trace-mode spline
+  --assets-dir assets/symbol_png \
+  --workdir work_v2 \
+  --mode faithful-trace \
+  --trace-profile low
 ```
 
-## Workflow steps
+## Two supported modes
 
-### 1. Input analysis
+### `faithful-trace`
 
-Run `analyze_image.py` to inspect:
-
-- width and height;
-- approximate background color;
-- approximate color count;
-- edge density;
-- low-resolution warning;
-- likely text-like regions to exclude or flag.
-
-Output:
+Recommended default. Uses `vtracer` with symbol-friendly settings:
 
 ```text
-work/analysis/image_report.json
+--colormode color
+--hierarchical stacked
+--mode spline
+--filter_speckle 2
+--color_precision 7
+--layer_difference 12
+--length_threshold 3.0
+--max_iterations 8
+--splice_threshold 30
+--path_precision 3
 ```
 
-### 2. Optional enhancement
+This mode is intended to preserve the appearance of already-clean icons and hand-drawn strokes. Use `trace-profile: low` by default for clean symbol PNGs. Higher profiles mean stronger cleanup and fewer paths, not necessarily higher fidelity.
 
-Run `preprocess_image.py` to perform deterministic scaling, denoising, sharpening, and background normalization.
+### `symbol-redraw`
 
-Use 2x or 4x enhancement only when the input is too small for stable edge tracing. Treat enhancement as auxiliary; retain the original input for QA comparison.
-
-### 3. Element segmentation
-
-Run `segment_elements.py` to produce:
-
-- cropped raster assets;
-- per-element masks where available;
-- a layout manifest with bounding boxes, estimated type, and z-order.
-
-Asset classes:
-
-- `icons`: discrete small elements such as houses, trees, clouds, stones, or symbols;
-- `lines`: rain strokes, outlines, road edges, frame lines;
-- `shapes`: larger filled regions such as landslide mass, water area, dust, terrain, or background regions;
-- `compounds`: complex multi-part structures such as roads, bridges, or buildings grouped with nearby strokes.
-
-Do not over-trust semantic names in V1. Use generic stable IDs unless the user manually provides names.
-
-### 4. Element-level tracing
-
-Run `trace_elements.py` to convert cropped elements to SVG using `vtracer` by default.
-
-Prefer `spline` mode for hand-drawn and colored illustrations. Use alternative modes only when the user chooses a different tradeoff:
-
-- `spline`: smoother curves, good for hand-drawn illustrations;
-- `polygon`: simpler geometry, useful for regular structures;
-- `line-art`: stricter treatment of line drawings after thresholding.
-
-### 5. SVG optimization
-
-Use `svgo` if available. Optimization should remove redundant data while preserving structure and editability.
-
-Avoid excessive optimization that merges unrelated elements or destroys useful groups.
-
-### 6. Reassembly
-
-Run `assemble_svg.py` to restore the original coordinate system:
-
-- preserve `bbox` placement;
-- preserve estimated `z_index`;
-- keep element group IDs;
-- keep element classes.
-
-Output:
+Experimental deterministic fallback. It performs:
 
 ```text
-work/output/final.svg
+background removal
+→ content crop
+→ foreground masking
+→ adaptive palette reduction
+→ contour extraction
+→ simplified SVG path output
 ```
 
-### 7. QA comparison
+This mode is not a generative model. It can be useful for quick prototypes but can convert strokes into filled contour shapes and may reduce visual fidelity. Mark outputs as requiring review.
 
-Run `qa_compare.py` to generate:
-
-- assembled preview PNG when Inkscape or another renderer is available;
-- diff overlay;
-- QA report.
-
-Output:
+## Expected outputs
 
 ```text
-work/preview/assembled_preview.png
-work/preview/diff_overlay.png
-work/analysis/qa_report.json
+work_v2/
+├─ assets/
+│  └─ symbol_candidates/
+│     ├─ section_01/
+│     ├─ section_02/
+│     └─ symbol_assets_manifest.json
+├─ output/
+│  └─ symbol_library/
+│     ├─ symbols_png_clean/
+│     ├─ symbols_svg/
+│     └─ vector_symbol_manifest.json
+└─ pipeline_summary.json
 ```
 
-## Especially avoid
+`vector_symbol_manifest.json` is the primary handoff artifact. It should be used to review, rename, and map symbols to semantic classes.
 
-1. Excessive path fragmentation.
-2. Broken or jagged strokes.
-3. Boundary drift and shape distortion.
-4. Incorrect layer order.
-5. Position or scale drift during reassembly.
-6. Color drift and white-edge contamination.
-7. Inconsistent stroke width and style.
-8. Over-smoothing that destroys hand-drawn character.
-9. Vectorizing hallucinated AI-upscaling artifacts.
-10. Exporting final SVG without preview and QA inspection.
+## Recommended manifest extensions
 
-## Failure and review policy
+Downstream projects should enrich the manifest with fields such as:
 
-Flag the result as requiring manual review when:
+```json
+{
+  "symbol_id": "tree_broadleaf_001",
+  "semantic_class": "tree_or_vegetation",
+  "role": "vegetation_context",
+  "state": "normal",
+  "reuse_allowed": true,
+  "style_token": "hand_drawn_clean_dark_blue_outline",
+  "preferred_scale_range": [0.5, 1.5]
+}
+```
 
-- many small objects are missing;
-- path count is extremely high;
-- preview rendering fails;
-- large areas are visually displaced;
-- layer order appears incorrect;
-- the QA report cannot compare final SVG against the source image;
-- `vtracer` is unavailable and no acceptable vector fallback exists.
+## Review policy
 
-If the output is uncertain, provide the intermediate assets and metadata rather than pretending the SVG is final.
+Flag output as requiring manual review when:
+
+- automatic extraction merges unrelated icons;
+- captions or section headings remain in symbol crops;
+- foreground/background removal deletes pale fills;
+- SVG path count is excessive;
+- hand-drawn outlines are broken, jagged, or over-smoothed;
+- `vtracer` is unavailable and `symbol-redraw` fallback is used;
+- the user plans to use symbols in a publication figure.
+
+## Final composition policy
+
+Do not run automatic scene reassembly as part of the default workflow. The skill should stop after the SVG symbol library and manifest. Manual composition is the intended next step.
