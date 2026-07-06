@@ -50,7 +50,12 @@ def ensure_dir(path: Path) -> None:
 def estimate_background(arr: np.ndarray) -> np.ndarray:
     h, w, _ = arr.shape
     border = np.concatenate(
-        [arr[: max(1, h // 40), :, :].reshape(-1, 3), arr[-max(1, h // 40):, :, :].reshape(-1, 3), arr[:, : max(1, w // 40), :].reshape(-1, 3), arr[:, -max(1, w // 40):, :].reshape(-1, 3)],
+        [
+            arr[: max(1, h // 40), :, :].reshape(-1, 3),
+            arr[-max(1, h // 40):, :, :].reshape(-1, 3),
+            arr[:, : max(1, w // 40), :].reshape(-1, 3),
+            arr[:, -max(1, w // 40):, :].reshape(-1, 3),
+        ],
         axis=0,
     )
     return np.median(border, axis=0)
@@ -112,7 +117,7 @@ def classify_component(x: int, y: int, w: int, h: int, area: int, canvas_w: int,
     return "icon"
 
 
-def crop_with_alpha(arr: np.ndarray, labels: np.ndarray, component_id: int, bbox: Tuple[int, int, int, int], margin: int) -> Image.Image:
+def crop_with_alpha(arr: np.ndarray, labels: np.ndarray, component_id: int, bbox: Tuple[int, int, int, int], margin: int) -> Tuple[Image.Image, Tuple[int, int, int, int]]:
     x, y, w, h = bbox
     h_img, w_img = labels.shape
     x0 = max(0, x - margin)
@@ -123,7 +128,7 @@ def crop_with_alpha(arr: np.ndarray, labels: np.ndarray, component_id: int, bbox
     crop_rgb = arr[y0:y1, x0:x1, :]
     crop_alpha = (labels[y0:y1, x0:x1] == component_id).astype(np.uint8) * 255
     rgba = np.dstack([crop_rgb, crop_alpha])
-    return Image.fromarray(rgba, mode="RGBA")
+    return Image.fromarray(rgba, mode="RGBA"), (x0, y0, x1 - x0, y1 - y0)
 
 
 def segment(input_path: Path, assets_dir: Path, layout_path: Path, report_path: Path | None, level: str, exclude_text: bool) -> Dict[str, Any]:
@@ -159,7 +164,7 @@ def segment(input_path: Path, assets_dir: Path, layout_path: Path, report_path: 
         asset_rel = f"{type_dir}/{element_id}.png"
         asset_path = assets_dir / asset_rel
 
-        crop = crop_with_alpha(arr, labels, component_id, (x, y, w, h), margin)
+        crop, asset_bbox = crop_with_alpha(arr, labels, component_id, (x, y, w, h), margin)
         crop.save(asset_path)
 
         elements.append(
@@ -168,6 +173,8 @@ def segment(input_path: Path, assets_dir: Path, layout_path: Path, report_path: 
                 "name": element_id,
                 "type": element_type,
                 "bbox": [x, y, w, h],
+                "asset_bbox": list(asset_bbox),
+                "asset_origin": [asset_bbox[0], asset_bbox[1]],
                 "asset": asset_rel,
                 "z_index": TYPE_Z_BASE[element_type] + y,
                 "trace_method": "vtracer",
